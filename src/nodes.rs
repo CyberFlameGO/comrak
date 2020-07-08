@@ -130,6 +130,9 @@ pub enum NodeValue {
     /// **Inline**.  Superscript.  Enabled with `ext_superscript` option.
     Superscript,
 
+    /// **Inline**.  Subscript.  Enabled with `ext_subscript` option.
+    Subscript,
+
     /// **Inline**.  A [link](https://github.github.com/gfm/#links) to some URL, with possible
     /// title.
     Link(NodeLink),
@@ -139,6 +142,20 @@ pub enum NodeValue {
 
     /// **Inline**.  A footnote reference; the `Vec<u8>` is the referent footnote's name.
     FootnoteReference(Vec<u8>),
+
+    /// **Inline**.  Spoilered text.  Enabled with `ext_spoiler` option.
+    SpoileredText(Vec<u8>),
+
+    /// **Inline**.  Image mention link,  Enabled with `ext_furbooru` option.
+    ImageMention(ImageMentionKind),
+}
+
+#[derive(Debug, Clone)]
+pub enum ImageMentionKind {
+    Link(u64),
+    Thumbnail(u64),
+    SmallThumbnail(u64),
+    LargePreview(u64),
 }
 
 /// Alignment of a single table cell.
