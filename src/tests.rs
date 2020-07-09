@@ -580,6 +580,16 @@ fn superscript() {
 }
 
 #[test]
+fn subscript() {
+    html_opts!(
+        [extension.subscript],
+        concat!("e = mc%2%.\n"),
+        concat!("<p>e = mc<sub>2</sub>.</p>\n"),
+    );
+}
+
+
+#[test]
 fn header_ids() {
     html_opts(
         concat!(

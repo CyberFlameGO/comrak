@@ -91,6 +91,12 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
         if options.extension.superscript {
             s.special_chars[b'^' as usize] = true;
         }
+        if options.extension.subscript {
+            s.special_chars[b'%' as usize] = true;
+        }
+        if options.extension.furbooru {
+            s.special_chars[b'|' as usize] = true;
+        }
         for &c in &[b'"', b'\'', b'.', b'-'] {
             s.smart_chars[c as usize] = true;
         }
@@ -140,6 +146,8 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                 new_inl = Some(self.handle_delim(b'~'));
             } else if self.options.extension.superscript && c == '^' {
                 new_inl = Some(self.handle_delim(b'^'));
+            } else if self.options.extension.subscript && c == '%' {
+                new_inl = Some(self.handle_delim(b'%'));
             } else {
                 let endpos = self.find_special_char();
                 let mut contents = self.input[self.pos..endpos].to_vec();
@@ -238,6 +246,9 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
             if self.options.extension.superscript {
                 i['^' as usize] = stack_bottom;
             }
+            if self.options.extension.subscript {
+                i['%' as usize] = stack_bottom;
+            }
         }
 
         // This is traversing the stack from the top to the bottom, setting `closer` to
@@ -307,6 +318,7 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                     || closer.unwrap().delim_char == b'_'
                     || (self.options.extension.strikethrough && closer.unwrap().delim_char == b'~')
                     || (self.options.extension.superscript && closer.unwrap().delim_char == b'^')
+                    || (self.options.extension.subscript && closer.unwrap().delim_char == b'%')
                 {
                     if opener_found {
                         // Finally, here's the happy case where the delimiters
@@ -761,6 +773,8 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                 NodeValue::Strikethrough
             } else if self.options.extension.superscript && opener_char == b'^' {
                 NodeValue::Superscript
+            } else if self.options.extension.subscript && opener_char == b'%' {
+                NodeValue::Subscript
             } else if use_delims == 1 {
                 NodeValue::Emph
             } else {
