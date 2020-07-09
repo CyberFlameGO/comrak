@@ -708,7 +708,7 @@ impl<'o> HtmlFormatter<'o> {
                 }
             },
             NodeValue::SpoileredText => if entering {
-                self.output.write_all(b"<span class='spoiler'>")?;
+                self.output.write_all(b"<span class=\"spoiler\">")?;
             } else {
                 self.output.write_all(b"</span>")?;
             },

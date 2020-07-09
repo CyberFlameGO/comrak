@@ -148,6 +148,8 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                 new_inl = Some(self.handle_delim(b'^'));
             } else if self.options.extension.subscript && c == '%' {
                 new_inl = Some(self.handle_delim(b'%'));
+            } else if self.options.extension.furbooru && c == '|' {
+                new_inl = Some(self.handle_delim(b'|'));
             } else {
                 let endpos = self.find_special_char();
                 let mut contents = self.input[self.pos..endpos].to_vec();
@@ -249,6 +251,9 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
             if self.options.extension.subscript {
                 i['%' as usize] = stack_bottom;
             }
+            if self.options.extension.furbooru {
+                i['|' as usize] = stack_bottom;
+            }
         }
 
         // This is traversing the stack from the top to the bottom, setting `closer` to
@@ -319,6 +324,7 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                     || (self.options.extension.strikethrough && closer.unwrap().delim_char == b'~')
                     || (self.options.extension.superscript && closer.unwrap().delim_char == b'^')
                     || (self.options.extension.subscript && closer.unwrap().delim_char == b'%')
+                    || (self.options.extension.furbooru && closer.unwrap().delim_char == b'|')
                 {
                     if opener_found {
                         // Finally, here's the happy case where the delimiters
@@ -775,6 +781,8 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                 NodeValue::Superscript
             } else if self.options.extension.subscript && opener_char == b'%' {
                 NodeValue::Subscript
+            } else if self.options.extension.furbooru && opener_char == b'|' && use_delims == 2 {
+                NodeValue::SpoileredText
             } else if use_delims == 1 {
                 NodeValue::Emph
             } else {
