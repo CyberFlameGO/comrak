@@ -273,6 +273,9 @@ pub struct ComrakExtensionOptions {
     /// ```
     pub description_lists: bool,
 
+    /// Enables spoilertext
+    pub spoiler: bool,
+
     /// Enables Furbooru extensions to Markdown parsing.
     pub furbooru: bool,
 }

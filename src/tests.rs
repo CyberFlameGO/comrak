@@ -591,7 +591,7 @@ fn subscript() {
 #[test]
 fn spoiler() {
     html_opts!(
-        [extension.furbooru],
+        [extension.spoiler],
         concat!("The ||dog dies at the end of Marley and Me||.\n"),
         concat!("<p>The <span class=\"spoiler\">dog dies at the end of Marley and Me</span>.</p>\n"),
     );
