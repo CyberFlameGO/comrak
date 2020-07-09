@@ -143,19 +143,11 @@ pub enum NodeValue {
     /// **Inline**.  A footnote reference; the `Vec<u8>` is the referent footnote's name.
     FootnoteReference(Vec<u8>),
 
-    /// **Inline**.  Spoilered text.  Enabled with `ext_spoiler` option.
-    SpoileredText(Vec<u8>),
+    /// **Inline**.  Spoilered text.  Enabled with `ext_furbooru` option.
+    SpoileredText,
 
     /// **Inline**.  Image mention link,  Enabled with `ext_furbooru` option.
-    ImageMention(ImageMentionKind),
-}
-
-#[derive(Debug, Clone)]
-pub enum ImageMentionKind {
-    Link(u64),
-    Thumbnail(u64),
-    SmallThumbnail(u64),
-    LargePreview(u64),
+    ImageMention(Vec<u8>),
 }
 
 /// Alignment of a single table cell.

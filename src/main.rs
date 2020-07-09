@@ -70,6 +70,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "autolink",
                     "tasklist",
                     "superscript",
+                    "subscript",
+                    "furbooru",
                     "footnotes",
                     "description-lists",
                 ])
@@ -115,6 +117,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             autolink: exts.remove("autolink") || matches.is_present("gfm"),
             tasklist: exts.remove("tasklist") || matches.is_present("gfm"),
             superscript: exts.remove("superscript"),
+            subscript: exts.remove("subscript"),
+            furbooru: exts.remove("furbooru"),
             header_ids: matches.value_of("header-ids").map(|s| s.to_string()),
             footnotes: exts.remove("footnotes"),
             description_lists: exts.remove("description-lists"),

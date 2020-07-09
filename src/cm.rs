@@ -517,6 +517,11 @@ impl<'a, 'o> CommonMarkFormatter<'a, 'o> {
             } else {
                 write!(self, "^").unwrap();
             },
+            NodeValue::Subscript => if entering {
+                write!(self, "%").unwrap();
+            } else {
+                write!(self, "%").unwrap();
+            },
             NodeValue::Link(ref nl) => if is_autolink(node, nl) {
                 if entering {
                     write!(self, "<").unwrap();
@@ -551,6 +556,9 @@ impl<'a, 'o> CommonMarkFormatter<'a, 'o> {
                     write!(self, "\"").unwrap();
                 }
                 write!(self, ")").unwrap();
+            },
+            NodeValue::ImageMention(ref nl) => {
+                write!(self, ">>{}", String::from_utf8(nl.clone()).unwrap()).unwrap();
             },
             NodeValue::Table(..) => {
                 if entering {
@@ -613,6 +621,7 @@ impl<'a, 'o> CommonMarkFormatter<'a, 'o> {
                 self.write_all(r).unwrap();
                 self.write_all(b"]").unwrap();
             },
+            NodeValue::SpoileredText => write!(self, "||").unwrap(),
         };
         true
     }

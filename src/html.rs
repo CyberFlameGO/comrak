@@ -564,6 +564,11 @@ impl<'o> HtmlFormatter<'o> {
             } else {
                 self.output.write_all(b"</sup>")?;
             },
+            NodeValue::Subscript => if entering {
+                self.output.write_all(b"<sub>")?;
+            } else {
+                self.output.write_all(b"</sub>")?;
+            },
             NodeValue::Link(ref nl) => if entering {
                 self.output.write_all(b"<a href=\"")?;
                 if self.options.render.unsafe_ || !dangerous_url(&nl.url) {
@@ -702,6 +707,15 @@ impl<'o> HtmlFormatter<'o> {
                         .write_all(b"<input type=\"checkbox\" disabled=\"\" /> ")?;
                 }
             },
+            NodeValue::SpoileredText => if entering {
+                self.output.write_all(b"<span class='spoiler'>")?;
+            } else {
+                self.output.write_all(b"</span>")?;
+            },
+            NodeValue::ImageMention(ref data) => {
+                log::debug!("TODO(Xe): this");
+                write!(self.output, "<a href=\"{0}\">>>{0}</a>", String::from_utf8(data.clone()).unwrap())?;
+            }
         }
         Ok(false)
     }

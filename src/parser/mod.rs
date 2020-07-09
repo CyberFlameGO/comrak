@@ -217,6 +217,11 @@ pub struct ComrakExtensionOptions {
     /// ```
     pub superscript: bool,
 
+    /// Enables the subscript Comrak extension.
+    ///
+    /// TODO(Xe): Add example here once things work.
+    pub subscript: bool,
+
     /// Enables the header IDs Comrak extension.
     ///
     /// ```
@@ -267,6 +272,9 @@ pub struct ComrakExtensionOptions {
     ///            "<dl><dt>\n<p>Term</p>\n</dt>\n<dd>\n<p>Definition</p>\n</dd>\n</dl>\n");
     /// ```
     pub description_lists: bool,
+
+    /// Enables Furbooru extensions to Markdown parsing.
+    pub furbooru: bool,
 }
 
 #[derive(Default, Debug, Clone)]
