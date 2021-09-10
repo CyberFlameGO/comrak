@@ -754,7 +754,9 @@ fn spoiler() {
     html_opts!(
         [extension.spoiler],
         concat!("The ||dog dies at the end of Marley and Me||.\n"),
-        concat!("<p>The <span class=\"spoiler\">dog dies at the end of Marley and Me</span>.</p>\n"),
+        concat!(
+            "<p>The <span class=\"spoiler\">dog dies at the end of Marley and Me</span>.</p>\n"
+        ),
     );
 }
 
@@ -764,7 +766,9 @@ fn image_mention() {
     html_opts!(
         [extension.furbooru],
         concat!("test >>1 test\n"),
-        concat!("<p>The <span class=\"spoiler\">dog dies at the end of Marley and Me</span>.</p>\n"),
+        concat!(
+            "<p>The <span class=\"spoiler\">dog dies at the end of Marley and Me</span>.</p>\n"
+        ),
     );
 }
 
