@@ -150,7 +150,7 @@ pub enum NodeValue {
     SpoileredText,
 
     /// **Inline**.  Image mention link,  Enabled with `ext_furbooru` option.
-    ImageMention(Vec<u8>),
+    ImageMention(NodeLink),
 }
 
 /// Alignment of a single table cell.

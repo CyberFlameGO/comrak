@@ -734,7 +734,7 @@ impl<'a, 'o> CommonMarkFormatter<'a, 'o> {
     }
 
     fn format_image_mention(&mut self, nl: &NodeLink) {
-        write!(self, ">>{}", String::from_utf8(nl.clone()).unwrap()).unwrap();
+        write!(self, ">>{}", String::from_utf8(nl.url.clone()).unwrap()).unwrap();
     }
 
     fn format_spoilered_text(&mut self) {

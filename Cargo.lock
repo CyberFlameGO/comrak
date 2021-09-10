@@ -162,6 +162,7 @@ dependencies = [
  "clap",
  "entities",
  "lazy_static",
+ "log",
  "pest",
  "pest_derive",
  "propfuzz",
@@ -310,6 +311,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f30344350a2a51da54c1d53be93fade8a237e545dbcc4bdbe635413f2117cab9"
 dependencies = [
  "safemem",
+]
+
+[[package]]
+name = "log"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]

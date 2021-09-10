@@ -836,7 +836,7 @@ impl<'o> HtmlFormatter<'o> {
             }
             NodeValue::ImageMention(ref data) => {
                 log::debug!("TODO(Xe): this");
-                write!(self.output, "<a href=\"{0}\">>>{0}</a>", String::from_utf8(data.clone()).unwrap())?;
+                write!(self.output, "<a href=\"{0}\">>>{0}</a>", String::from_utf8(data.url.clone()).unwrap())?;
             }
         }
         Ok(false)
