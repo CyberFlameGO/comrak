@@ -1,6 +1,7 @@
 use ctype::{ispunct, isspace};
 use entity;
 use parser::AutolinkType;
+use std::collections::HashMap;
 use std::ptr;
 use std::str;
 
@@ -71,7 +72,7 @@ pub fn normalize_code(v: &[u8]) -> Vec<u8> {
         i += 1
     }
 
-    if contains_nonspace && r.len() > 0 && r[0] == b' ' && r[r.len() - 1] == b' ' {
+    if contains_nonspace && !r.is_empty() && r[0] == b' ' && r[r.len() - 1] == b' ' {
         r.remove(0);
         r.pop();
     }
@@ -109,17 +110,11 @@ pub fn remove_trailing_blank_lines(line: &mut Vec<u8>) {
 }
 
 pub fn is_line_end_char(ch: u8) -> bool {
-    match ch {
-        10 | 13 => true,
-        _ => false,
-    }
+    matches!(ch, 10 | 13)
 }
 
 pub fn is_space_or_tab(ch: u8) -> bool {
-    match ch {
-        9 | 32 => true,
-        _ => false,
-    }
+    matches!(ch, 9 | 32)
 }
 
 pub fn chop_trailing_hashtags(line: &mut Vec<u8>) {
@@ -183,7 +178,7 @@ fn shift_buf_left(buf: &mut [u8], n: usize) {
     let keep = buf.len() - n;
     unsafe {
         let dst = buf.as_mut_ptr();
-        let src = dst.offset(n as isize);
+        let src = dst.add(n);
         ptr::copy(src, dst, keep);
     }
 }
@@ -253,4 +248,29 @@ pub fn normalize_label(i: &[u8]) -> Vec<u8> {
         }
     }
     v.into_bytes()
+}
+
+pub fn build_opening_tag(tag: &str, attributes: &HashMap<String, String>) -> String {
+    let mut tag_parts = vec![format!("<{}", tag)];
+
+    for (attr, val) in attributes {
+        tag_parts.push(format!(" {}=\"{}\"", attr, val));
+    }
+
+    tag_parts.push(String::from(">"));
+
+    tag_parts.join("")
+}
+
+#[cfg(feature = "syntect")]
+pub fn extract_attributes_from_tag(html_tag: &str) -> HashMap<String, String> {
+    let re = regex::Regex::new("([a-zA-Z_:][-a-zA-Z0-9_:.]+)=([\"'])(.*?)([\"'])").unwrap();
+
+    let mut attributes: HashMap<String, String> = HashMap::new();
+
+    for caps in re.captures_iter(html_tag) {
+        attributes.insert(String::from(&caps[1]), String::from(&caps[3]));
+    }
+
+    attributes
 }

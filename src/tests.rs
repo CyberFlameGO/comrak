@@ -1,9 +1,49 @@
+use crate::nodes::{AstNode, NodeCode, NodeValue};
+use adapters::SyntaxHighlighterAdapter;
 use cm;
 use html;
-#[cfg(feature = "benchmarks")]
-use test::Bencher;
+#[cfg(feature = "syntect")]
+use plugins::syntect::SyntectAdapter;
+use propfuzz::prelude::*;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use strings::build_opening_tag;
 use timebomb::timeout_ms;
-use {parse_document, Arena, ComrakOptions};
+use {
+    parse_document, Arena, ComrakExtensionOptions, ComrakOptions, ComrakParseOptions,
+    ComrakPlugins, ComrakRenderOptions,
+};
+
+#[propfuzz]
+fn fuzz_doesnt_crash(md: String) {
+    let options = ComrakOptions {
+        extension: ComrakExtensionOptions {
+            strikethrough: true,
+            tagfilter: true,
+            table: true,
+            autolink: true,
+            tasklist: true,
+            superscript: true,
+            header_ids: Some("user-content-".to_string()),
+            footnotes: true,
+            description_lists: true,
+            front_matter_delimiter: None,
+        },
+        parse: ComrakParseOptions {
+            smart: true,
+            default_info_string: Some("Rust".to_string()),
+        },
+        render: ComrakRenderOptions {
+            hardbreaks: true,
+            github_pre_lang: true,
+            width: 80,
+            unsafe_: true,
+            escape: false,
+        },
+    };
+
+    parse_document(&Arena::new(), &md, &options);
+}
 
 fn compare_strs(output: &str, expected: &str, kind: &str) {
     if output != expected {
@@ -62,21 +102,37 @@ macro_rules! html_opts {
     };
 }
 
-#[cfg(feature = "benchmarks")]
-#[cfg_attr(feature = "benchmarks", bench)]
-fn bench_progit(b: &mut Bencher) {
-    use std::fs::File;
-    use std::io::Read;
+fn html_plugins(input: &str, expected: &str, plugins: &ComrakPlugins) {
+    let arena = Arena::new();
+    let options = ComrakOptions::default();
 
-    let mut file = File::open("script/progit.md").unwrap();
-    let mut s = String::with_capacity(524288);
-    file.read_to_string(&mut s).unwrap();
-    b.iter(|| {
-        let arena = Arena::new();
-        let root = parse_document(&arena, &s, &ComrakOptions::default());
-        let mut output = vec![];
-        html::format_document(root, &ComrakOptions::default(), &mut output).unwrap()
-    });
+    let root = parse_document(&arena, input, &options);
+    let mut output = vec![];
+    html::format_document_with_plugins(root, &options, &mut output, &plugins).unwrap();
+    compare_strs(&String::from_utf8(output).unwrap(), expected, "regular");
+
+    let mut md = vec![];
+    cm::format_document(root, &options, &mut md).unwrap();
+    let root = parse_document(&arena, &String::from_utf8(md).unwrap(), &options);
+    let mut output_from_rt = vec![];
+    html::format_document_with_plugins(root, &options, &mut output_from_rt, &plugins).unwrap();
+    compare_strs(
+        &String::from_utf8(output_from_rt).unwrap(),
+        expected,
+        "roundtrip",
+    );
+}
+
+fn asssert_node_eq<'a>(node: &'a AstNode<'a>, location: &[usize], expected: &NodeValue) {
+    let node = location
+        .iter()
+        .fold(node, |node, &n| node.children().nth(n).unwrap());
+
+    let data = node.data.borrow();
+    let actual = format!("{:?}", data.value);
+    let expected = format!("{:?}", expected);
+
+    compare_strs(&actual, &expected, "ast comparison");
 }
 
 #[test]
@@ -114,6 +170,56 @@ fn codefence() {
             "</code></pre>\n"
         ),
     );
+}
+
+#[test]
+fn syntax_highlighter_plugin() {
+    pub struct MockAdapter {}
+
+    impl SyntaxHighlighterAdapter for MockAdapter {
+        fn highlight(&self, lang: Option<&str>, code: &str) -> String {
+            format!("<!--{}--><span>{}</span>", lang.unwrap(), code)
+        }
+
+        fn build_pre_tag(&self, attributes: &HashMap<String, String>) -> String {
+            build_opening_tag("pre", attributes)
+        }
+
+        fn build_code_tag(&self, attributes: &HashMap<String, String>) -> String {
+            build_opening_tag("code", attributes)
+        }
+    }
+
+    let input = concat!("``` rust yum\n", "fn main<'a>();\n", "```\n");
+    let expected = concat!(
+        "<pre><code class=\"language-rust\"><!--rust--><span>fn main<'a>();\n</span>",
+        "</code></pre>\n"
+    );
+
+    let mut plugins = ComrakPlugins::default();
+    let adapter = MockAdapter {};
+    plugins.render.codefence_syntax_highlighter = Some(&adapter);
+
+    html_plugins(input, expected, &plugins);
+}
+
+#[test]
+#[cfg(feature = "syntect")]
+fn syntect_plugin() {
+    let adapter = SyntectAdapter::new("base16-ocean.dark");
+
+    let input = concat!("```rust\n", "fn main<'a>();\n", "```\n");
+    let expected = concat!(
+        "<pre style=\"background-color:#2b303b;\"><code class=\"language-rust\">\n",
+        "<span style=\"color:#b48ead;\">fn </span><span style=\"color:#8fa1b3;\">main</span><span style=\"color:#c0c5ce;\">",
+        "&lt;</span><span style=\"color:#b48ead;\">&#39;a</span><span style=\"color:#c0c5ce;\">&gt;();\n</span>\n",
+        "</code></pre>\n"
+    );
+
+    let mut plugins = ComrakPlugins::default();
+    plugins.render.codefence_syntax_highlighter = Some(&adapter);
+
+    html_plugins(input, expected, &plugins);
 }
 
 #[test]
@@ -295,6 +401,27 @@ fn backticks() {
 }
 
 #[test]
+fn backticks_num() {
+    let input = "Some `code1`. More ``` code2 ```.\n";
+
+    let arena = Arena::new();
+    let options = ComrakOptions::default();
+    let root = parse_document(&arena, input, &options);
+
+    let code1 = NodeValue::Code(NodeCode {
+        num_backticks: 1,
+        literal: b"code1".to_vec(),
+    });
+    asssert_node_eq(root, &[0, 1], &code1);
+
+    let code2 = NodeValue::Code(NodeCode {
+        num_backticks: 3,
+        literal: b"code2".to_vec(),
+    });
+    asssert_node_eq(root, &[0, 3], &code2);
+}
+
+#[test]
 fn backslashes() {
     html(
         concat!(
@@ -406,6 +533,14 @@ fn reference_links() {
 }
 
 #[test]
+fn link_entity_regression() {
+    html(
+        "[link](&#x6A&#x61&#x76&#x61&#x73&#x63&#x72&#x69&#x70&#x74&#x3A&#x61&#x6C&#x65&#x72&#x74&#x28&#x27&#x58&#x53&#x53&#x27&#x29)",
+        "<p><a href=\"&amp;#x6A&amp;#x61&amp;#x76&amp;#x61&amp;#x73&amp;#x63&amp;#x72&amp;#x69&amp;#x70&amp;#x74&amp;#x3A&amp;#x61&amp;#x6C&amp;#x65&amp;#x72&amp;#x74&amp;#x28&amp;#x27&amp;#x58&amp;#x53&amp;#x53&amp;#x27&amp;#x29\">link</a></p>\n",
+    );
+}
+
+#[test]
 fn strikethrough() {
     html_opts!(
         [extension.strikethrough],
@@ -438,6 +573,32 @@ fn table() {
             "<tr>\n",
             "<td>c</td>\n",
             "<td align=\"center\">d</td>\n",
+            "</tr>\n",
+            "</tbody>\n",
+            "</table>\n"
+        ),
+    );
+}
+
+#[test]
+fn table_regression() {
+    html_opts!(
+        [extension.table],
+        concat!("123\n", "456\n", "| a | b |\n", "| ---| --- |\n", "d | e\n"),
+        concat!(
+            "<p>123\n",
+            "456</p>\n",
+            "<table>\n",
+            "<thead>\n",
+            "<tr>\n",
+            "<th>a</th>\n",
+            "<th>b</th>\n",
+            "</tr>\n",
+            "</thead>\n",
+            "<tbody>\n",
+            "<tr>\n",
+            "<td>d</td>\n",
+            "<td>e</td>\n",
             "</tr>\n",
             "</tbody>\n",
             "</table>\n"
@@ -906,20 +1067,20 @@ fn cm_autolink_regression() {
 fn safety() {
     html(
         concat!(
-            "[data:png](data:png/x)\n\n",
-            "[data:gif](data:gif/x)\n\n",
-            "[data:jpeg](data:jpeg/x)\n\n",
-            "[data:webp](data:webp/x)\n\n",
+            "[data:image/png](data:image/png/x)\n\n",
+            "[data:image/gif](data:image/gif/x)\n\n",
+            "[data:image/jpeg](data:image/jpeg/x)\n\n",
+            "[data:image/webp](data:image/webp/x)\n\n",
             "[data:malicious](data:malicious/x)\n\n",
             "[javascript:malicious](javascript:malicious)\n\n",
             "[vbscript:malicious](vbscript:malicious)\n\n",
             "[file:malicious](file:malicious)\n\n",
         ),
         concat!(
-            "<p><a href=\"data:png/x\">data:png</a></p>\n",
-            "<p><a href=\"data:gif/x\">data:gif</a></p>\n",
-            "<p><a href=\"data:jpeg/x\">data:jpeg</a></p>\n",
-            "<p><a href=\"data:webp/x\">data:webp</a></p>\n",
+            "<p><a href=\"data:image/png/x\">data:image/png</a></p>\n",
+            "<p><a href=\"data:image/gif/x\">data:image/gif</a></p>\n",
+            "<p><a href=\"data:image/jpeg/x\">data:image/jpeg</a></p>\n",
+            "<p><a href=\"data:image/webp/x\">data:image/webp</a></p>\n",
             "<p><a href=\"\">data:malicious</a></p>\n",
             "<p><a href=\"\">javascript:malicious</a></p>\n",
             "<p><a href=\"\">vbscript:malicious</a></p>\n",
@@ -977,15 +1138,11 @@ fn description_lists() {
         ),
         concat!(
             "<dl>",
-            "<dt>\n",
-            "<p>Term 1</p>\n",
-            "</dt>\n",
+            "<dt>Term 1</dt>\n",
             "<dd>\n",
             "<p>Definition 1</p>\n",
             "</dd>\n",
-            "<dt>\n",
-            "<p>Term 2 with <em>inline markup</em></p>\n",
-            "</dt>\n",
+            "<dt>Term 2 with <em>inline markup</em></dt>\n",
             "<dd>\n",
             "<p>Definition 2</p>\n",
             "</dd>\n",
@@ -1008,15 +1165,11 @@ fn description_lists() {
             "<li>\n",
             "<p>Nested</p>\n",
             "<dl>",
-            "<dt>\n",
-            "<p>Term 1</p>\n",
-            "</dt>\n",
+            "<dt>Term 1</dt>\n",
             "<dd>\n",
             "<p>Definition 1</p>\n",
             "</dd>\n",
-            "<dt>\n",
-            "<p>Term 2 with <em>inline markup</em></p>\n",
-            "</dt>\n",
+            "<dt>Term 2 with <em>inline markup</em></dt>\n",
             "<dd>\n",
             "<p>Definition 2</p>\n",
             "</dd>\n",
@@ -1025,4 +1178,178 @@ fn description_lists() {
             "</ul>\n",
         ),
     );
+}
+
+#[test]
+fn case_insensitive_safety() {
+    html(
+        "[a](javascript:a) [b](Javascript:b) [c](jaVascript:c) [d](data:xyz) [e](Data:xyz) [f](vbscripT:f) [g](FILE:g)\n",
+        "<p><a href=\"\">a</a> <a href=\"\">b</a> <a href=\"\">c</a> <a href=\"\">d</a> <a href=\"\">e</a> <a href=\"\">f</a> <a href=\"\">g</a></p>\n",
+    );
+}
+
+#[test]
+fn exercise_full_api<'a>() {
+    let arena = ::Arena::new();
+    let default_options = ::ComrakOptions::default();
+    let default_plugins = ::ComrakPlugins::default();
+    let node = ::parse_document(&arena, "# My document\n", &default_options);
+    let mut buffer = vec![];
+
+    // Use every member of the exposed API without any defaults.
+    // Not looking for specific outputs, just want to know if the API changes shape.
+
+    let _: std::io::Result<()> = ::format_commonmark(node, &default_options, &mut buffer);
+
+    let _: std::io::Result<()> = ::format_html(node, &default_options, &mut buffer);
+
+    let _: std::io::Result<()> =
+        ::format_html_with_plugins(node, &default_options, &mut buffer, &default_plugins);
+
+    let _: String = ::Anchorizer::new().anchorize("header".to_string());
+
+    let _: &AstNode = ::parse_document(&arena, "document", &default_options);
+
+    let _: &AstNode = ::parse_document_with_broken_link_callback(
+        &arena,
+        "document",
+        &default_options,
+        Some(&mut |_: &[u8]| Some((b"abc".to_vec(), b"xyz".to_vec()))),
+    );
+
+    let _ = ::ComrakOptions {
+        extension: ::ComrakExtensionOptions {
+            strikethrough: false,
+            tagfilter: false,
+            table: false,
+            autolink: false,
+            tasklist: false,
+            superscript: false,
+            header_ids: Some("abc".to_string()),
+            footnotes: false,
+            description_lists: false,
+            front_matter_delimiter: None,
+        },
+        parse: ::ComrakParseOptions {
+            smart: false,
+            default_info_string: Some("abc".to_string()),
+        },
+        render: ::ComrakRenderOptions {
+            hardbreaks: false,
+            github_pre_lang: false,
+            width: 123456,
+            unsafe_: false,
+            escape: false,
+        },
+    };
+
+    pub struct MockAdapter {}
+    impl SyntaxHighlighterAdapter for MockAdapter {
+        fn highlight(&self, lang: Option<&str>, code: &str) -> String {
+            String::from(format!("{}{}", lang.unwrap(), code))
+        }
+
+        fn build_pre_tag(&self, attributes: &HashMap<String, String>) -> String {
+            build_opening_tag("pre", &attributes)
+        }
+
+        fn build_code_tag(&self, attributes: &HashMap<String, String>) -> String {
+            build_opening_tag("code", &attributes)
+        }
+    }
+
+    let syntax_highlighter_adapter = MockAdapter {};
+
+    let _ = ::ComrakPlugins {
+        render: ::ComrakRenderPlugins {
+            codefence_syntax_highlighter: Some(&syntax_highlighter_adapter),
+        },
+    };
+
+    let _: String = ::markdown_to_html("# Yes", &default_options);
+
+    //
+
+    let ast = node.data.borrow();
+    let _ = ast.start_line;
+    match &ast.value {
+        ::nodes::NodeValue::Document => {}
+        ::nodes::NodeValue::FrontMatter(_) => {}
+        ::nodes::NodeValue::BlockQuote => {}
+        ::nodes::NodeValue::List(nl) | ::nodes::NodeValue::Item(nl) => {
+            match nl.list_type {
+                ::nodes::ListType::Bullet => {}
+                ::nodes::ListType::Ordered => {}
+            }
+            let _: usize = nl.start;
+            match nl.delimiter {
+                ::nodes::ListDelimType::Period => {}
+                ::nodes::ListDelimType::Paren => {}
+            }
+            let _: u8 = nl.bullet_char;
+            let _: bool = nl.tight;
+        }
+        ::nodes::NodeValue::DescriptionList => {}
+        ::nodes::NodeValue::DescriptionItem(_ndi) => {}
+        ::nodes::NodeValue::DescriptionTerm => {}
+        ::nodes::NodeValue::DescriptionDetails => {}
+        ::nodes::NodeValue::CodeBlock(ncb) => {
+            let _: bool = ncb.fenced;
+            let _: u8 = ncb.fence_char;
+            let _: usize = ncb.fence_length;
+            let _: Vec<u8> = ncb.info;
+            let _: Vec<u8> = ncb.literal;
+        }
+        ::nodes::NodeValue::HtmlBlock(nhb) => {
+            let _: Vec<u8> = nhb.literal;
+        }
+        ::nodes::NodeValue::Paragraph => {}
+        ::nodes::NodeValue::Heading(nh) => {
+            let _: u32 = nh.level;
+            let _: bool = nh.setext;
+        }
+        ::nodes::NodeValue::ThematicBreak => {}
+        ::nodes::NodeValue::FootnoteDefinition(name) => {
+            let _: &Vec<u8> = name;
+        }
+        ::nodes::NodeValue::Table(aligns) => {
+            let _: &Vec<::nodes::TableAlignment> = aligns;
+            match aligns[0] {
+                ::nodes::TableAlignment::None => {}
+                ::nodes::TableAlignment::Left => {}
+                ::nodes::TableAlignment::Center => {}
+                ::nodes::TableAlignment::Right => {}
+            }
+        }
+        ::nodes::NodeValue::TableRow(header) => {
+            let _: &bool = header;
+        }
+        ::nodes::NodeValue::TableCell => {}
+        ::nodes::NodeValue::Text(text) => {
+            let _: &Vec<u8> = text;
+        }
+        ::nodes::NodeValue::TaskItem(checked) => {
+            let _: &bool = checked;
+        }
+        ::nodes::NodeValue::SoftBreak => {}
+        ::nodes::NodeValue::LineBreak => {}
+        ::nodes::NodeValue::Code(code) => {
+            let _: usize = code.num_backticks;
+            let _: Vec<u8> = code.literal;
+        }
+        ::nodes::NodeValue::HtmlInline(html) => {
+            let _: &Vec<u8> = html;
+        }
+        ::nodes::NodeValue::Emph => {}
+        ::nodes::NodeValue::Strong => {}
+        ::nodes::NodeValue::Strikethrough => {}
+        ::nodes::NodeValue::Superscript => {}
+        ::nodes::NodeValue::Link(nl) | ::nodes::NodeValue::Image(nl) => {
+            let _: Vec<u8> = nl.url;
+            let _: Vec<u8> = nl.title;
+        }
+        ::nodes::NodeValue::FootnoteReference(name) => {
+            let _: &Vec<u8> = name;
+        }
+    }
 }

@@ -16,7 +16,7 @@ const INDENT: usize = 4;
 const CLOSE_NEWLINE: bool = false;
 
 use comrak::nodes::{AstNode, NodeValue};
-use comrak::{parse_document, Arena, ComrakOptions, ComrakExtensionOptions};
+use comrak::{parse_document, Arena, ComrakExtensionOptions, ComrakOptions};
 use std::env;
 use std::error::Error;
 use std::fs::File;
@@ -44,10 +44,18 @@ fn iter_nodes<'a, W: Write>(
     match &node.data.borrow().value {
         Text(t) => write!(writer, "{:?}", String::from_utf8_lossy(&t))?,
         value => {
-            try_node_inline!(value, Code);
             try_node_inline!(value, FootnoteDefinition);
             try_node_inline!(value, FootnoteReference);
             try_node_inline!(value, HtmlInline);
+
+            if let Code(code) = value {
+                return write!(
+                    writer,
+                    "Code({:?}, {})",
+                    String::from_utf8_lossy(&code.literal),
+                    code.num_backticks
+                );
+            }
 
             let has_blocks = node.children().any(|c| c.data.borrow().value.block());
 

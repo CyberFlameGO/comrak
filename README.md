@@ -1,4 +1,6 @@
-![Build Status](https://action-badges.now.sh/kivikakk/comrak) ![Spec
+# Comrak
+
+[![Build Status](https://github.com/kivikakk/comrak/actions/workflows/rust.yml/badge.svg)](https://github.com/kivikakk/comrak/actions/workflows/rust.yml) ![Spec
 Status: 671/671](https://img.shields.io/badge/specs-671%2F671-brightgreen.svg) [![Financial Contributors on Open
 Collective](https://opencollective.com/comrak/all/badge.svg?label=financial+contributors)](https://opencollective.com/comrak)
 [![crates.io version](https://img.shields.io/crates/v/comrak.svg)](https://crates.io/crates/comrak)
@@ -6,13 +8,13 @@ Collective](https://opencollective.com/comrak/all/badge.svg?label=financial+cont
 
 Rust port of [github's `cmark-gfm`](https://github.com/github/cmark).
 
-  - [Installation](#installation)
-  - [Usage](#usage)
-  - [Security](#security)
-  - [Extensions](#extensions)
-  - [Related projects](#related-projects)
-  - [Contributing](#contributing)
-  - [Legal](#legal)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Security](#security)
+- [Extensions](#extensions)
+- [Related projects](#related-projects)
+- [Contributing](#contributing)
+- [Legal](#legal)
 
 ## Installation
 
@@ -20,18 +22,28 @@ Specify it as a requirement in `Cargo.toml`:
 
 ``` toml
 [dependencies]
-comrak = "0.7"
+comrak = "0.10"
 ```
 
 Comrak supports Rust stable.
 
-## Usage
+### Mac & Linux Binaries
 
-A binary is included which does everything you typically want:
+``` bash
+curl https://webinstall.dev/comrak | bash
+```
+
+### Windows 10 Binaries
+
+``` powershell
+curl.exe -A "MS" https://webinstall.dev/comrak | powershell
+```
+
+## Usage
 
 ``` console
 $ comrak --help
-comrak 0.7.0
+comrak 0.12.1
 Ashe Connor <ashe@kivikakk.ee>
 A 100% CommonMark-compatible GitHub Flavored Markdown parser and formatter
 
@@ -39,6 +51,7 @@ USAGE:
     comrak [FLAGS] [OPTIONS] [--] [FILE]...
 
 FLAGS:
+        --escape             Escape raw HTML instead of clobbering it
         --gfm                Enable GitHub-flavored markdown extensions strikethrough, tagfilter, table, autolink, and
                              tasklist. It also enables --github-pre-lang.
         --github-pre-lang    Use GitHub-style <pre lang> for code blocks
@@ -49,15 +62,26 @@ FLAGS:
     -V, --version            Prints version information
 
 OPTIONS:
-        --default-info-string <INFO>    Default value for fenced code block's info strings if none is given
-    -e, --extension <EXTENSION>...      Specify an extension name to use [possible values: strikethrough, tagfilter,
-                                        table, autolink, tasklist, superscript, footnotes, description-lists]
-    -t, --to <FORMAT>                   Specify output format [default: html]  [possible values: html, commonmark]
-        --header-ids <PREFIX>           Use the Comrak header IDs extension, with the given ID prefix
-        --width <WIDTH>                 Specify wrap width (0 = nowrap) [default: 0]
+    -c, --config-file <PATH>                    Path to config file containing command-line arguments, or `none'
+                                                [default: /Users/kameliya/.config/comrak/config]
+        --default-info-string <INFO>            Default value for fenced code block's info strings if none is given
+    -e, --extension <EXTENSION>...              Specify an extension name to use [possible values: strikethrough,
+                                                tagfilter, table, autolink, tasklist, superscript, footnotes,
+                                                description-lists]
+    -t, --to <FORMAT>                           Specify output format [default: html]  [possible values: html,
+                                                commonmark]
+        --front-matter-delimiter <DELIMITER>    Ignore front-matter that starts and ends with the given string
+        --header-ids <PREFIX>                   Use the Comrak header IDs extension, with the given ID prefix
+    -o, --output <FILE>                         Write output to FILE instead of stdout
+        --syntax-highlighting <THEME>           Syntax highlighting for codefence blocks. Choose a theme or 'none' for
+                                                disabling. [default: base16-ocean.dark]
+        --width <WIDTH>                         Specify wrap width (0 = nowrap) [default: 0]
 
 ARGS:
     <FILE>...    The CommonMark file to parse; or standard input if none passed
+
+By default, Comrak will attempt to read command-line options from a config file specified by --config-file.  This
+behaviour can be disabled by passing --config-file none.  It is not an error if the file does not exist.
 ```
 
 And there's a Rust interface. You can use `comrak::markdown_to_html` directly:
@@ -127,21 +151,39 @@ use of a sanitisation library like [`ammonia`](https://github.com/notriddle/ammo
 Comrak supports the five extensions to CommonMark defined in the [GitHub Flavored Markdown
 Spec](https://github.github.com/gfm/):
 
-  - [Tables](https://github.github.com/gfm/#tables-extension-)
-  - [Task list items](https://github.github.com/gfm/#task-list-items-extension-)
-  - [Strikethrough](https://github.github.com/gfm/#strikethrough-extension-)
-  - [Autolinks](https://github.github.com/gfm/#autolinks-extension-)
-  - [Disallowed Raw HTML](https://github.github.com/gfm/#disallowed-raw-html-extension-)
+- [Tables](https://github.github.com/gfm/#tables-extension-)
+- [Task list items](https://github.github.com/gfm/#task-list-items-extension-)
+- [Strikethrough](https://github.github.com/gfm/#strikethrough-extension-)
+- [Autolinks](https://github.github.com/gfm/#autolinks-extension-)
+- [Disallowed Raw HTML](https://github.github.com/gfm/#disallowed-raw-html-extension-)
 
 Comrak additionally supports its own extensions, which are yet to be specced out (PRs welcome\!):
 
-  - Superscript
-  - Header IDs
-  - Footnotes
-  - Description lists
+- Superscript
+- Header IDs
+- Footnotes
+- Description lists
 
 By default none are enabled; they are individually enabled with each parse by setting the appropriate values in the
 [`ComrakOptions` struct](https://docs.rs/comrak/newest/comrak/struct.ComrakOptions.html).
+
+## Plugins
+
+### Codefence syntax highlighter
+
+At the moment syntax highlighting of codefence blocks is the only feature that can be enhanced with plugins.
+
+Create an implementation of the `SyntaxHighlighterAdapter` trait, and then provide an instance of such adapter to
+`ComrakPlugins.render.codefence_syntax_highlighter`. For formatting a markdown document with plugins, use the
+`markdown_to_html_with_plugins` function, which accepts your plugin as a parameter.
+
+See the `syntax_highlighter.rs` and `syntect.rs` examples for more details.
+
+#### Syntect
+
+[`syntect`](https://github.com/trishume/syntect) is a syntax highlighting library for Rust. By default, `comrak` offers
+a plugin for it. In order to utilize it, create an instance of `plugins::syntect::SyntectAdapter` and use it as your
+`ComrakPlugins` option.
 
 ## Related projects
 
@@ -154,14 +196,13 @@ The downside, of course, is that the code is not what I'd call idiomatic Rust (*
 contributors and I have made it as fast as possible, it simply won't be as fast as some other CommonMark parsers
 depending on your use-case. Here are some other projects to consider:
 
-  - [Raph Levien](https://github.com/raphlinus)'s [`pulldown-cmark`](https://github.com/google/pulldown-cmark). It's
-    very fast, uses a novel parsing algorithm, and doesn't construct an AST (but you can use it to make one if you
-    want). Recent `cargo doc` uses this, as do many other projects in the ecosystem. It's not quite at 100% spec
-    compatibility yet.
-  - [Ben Navetta](https://github.com/bnavetta)'s [`rcmark`](https://github.com/bnavetta/rcmark) is a set of bindings to
-    `libcmark`. It hasn't been updated in a while, though there's an [open pull
-    request](https://github.com/bnavetta/rcmark/pull/2).
-  - Know of another library? Please open a PR to add it\!
+- [Raph Levien](https://github.com/raphlinus)'s [`pulldown-cmark`](https://github.com/google/pulldown-cmark). It's
+  very fast, uses a novel parsing algorithm, and doesn't construct an AST (but you can use it to make one if you
+  want). `cargo doc` uses this, as do many other projects in the ecosystem.
+- [Ben Navetta](https://github.com/bnavetta)'s [`rcmark`](https://github.com/bnavetta/rcmark) is a set of bindings to
+  `libcmark`. It hasn't been updated in a while, though there's an [open pull
+  request](https://github.com/bnavetta/rcmark/pull/2).
+- Know of another library? Please open a PR to add it\!
 
 As far as I know, Comrak is the only library to implement all of the [GitHub Flavored Markdown
 extensions](https://github.github.com/gfm) to the spec, but this tends to only be important if you want to reproduce
@@ -204,9 +245,13 @@ Support this project with your organization. Your logo will show up here with a 
 <a href="https://opencollective.com/comrak/organization/8/website"><img src="https://opencollective.com/comrak/organization/8/avatar.svg"></a>
 <a href="https://opencollective.com/comrak/organization/9/website"><img src="https://opencollective.com/comrak/organization/9/avatar.svg"></a>
 
+## Contact
+
+Ashe Connor \<ashe kivikakk ee\>
+
 ## Legal
 
-Copyright (c) 2017–2020, Ashe Connor. Licensed under the [2-Clause BSD
+Copyright (c) 2017–2021, Ashe Connor. Licensed under the [2-Clause BSD
 License](https://opensource.org/licenses/BSD-2-Clause).
 
 `cmark` itself is is copyright (c) 2014, John MacFarlane.

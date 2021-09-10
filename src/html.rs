@@ -1,13 +1,14 @@
 use ctype::isspace;
-use nodes::{AstNode, ListType, NodeValue, TableAlignment};
-use parser::ComrakOptions;
+use nodes::{AstNode, ListType, NodeCode, NodeValue, TableAlignment};
+use parser::{ComrakOptions, ComrakPlugins};
 use regex::Regex;
 use scanners;
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::str;
+use strings::build_opening_tag;
 
 /// Formats an AST as HTML, modified by the given options.
 pub fn format_document<'a>(
@@ -15,11 +16,21 @@ pub fn format_document<'a>(
     options: &ComrakOptions,
     output: &mut dyn Write,
 ) -> io::Result<()> {
+    format_document_with_plugins(root, &options, output, &ComrakPlugins::default())
+}
+
+/// Formats an AST as HTML, modified by the given options. Accepts custom plugins.
+pub fn format_document_with_plugins<'a>(
+    root: &'a AstNode<'a>,
+    options: &ComrakOptions,
+    output: &mut dyn Write,
+    plugins: &ComrakPlugins,
+) -> io::Result<()> {
     let mut writer = WriteWithLast {
-        output: output,
+        output,
         last_was_lf: Cell::new(true),
     };
-    let mut f = HtmlFormatter::new(options, &mut writer);
+    let mut f = HtmlFormatter::new(options, &mut writer, plugins);
     f.format(root, false)?;
     if f.footnote_ix > 0 {
         f.output.write_all(b"</ol>\n</section>\n")?;
@@ -64,7 +75,7 @@ impl<'w> Write for WriteWithLast<'w> {
 /// // Second "stuff" has "-1" appended to make it unique.
 /// assert_eq!("stuff-1".to_string(), anchorizer.anchorize("Stuff".to_string()));
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Anchorizer(HashSet<String>);
 
 impl Anchorizer {
@@ -89,8 +100,7 @@ impl Anchorizer {
     /// ```
     pub fn anchorize(&mut self, header: String) -> String {
         lazy_static! {
-            static ref REJECTED_CHARS: Regex =
-                Regex::new(r"[^\p{L}\p{M}\p{N}\p{Pc} -]").unwrap();
+            static ref REJECTED_CHARS: Regex = Regex::new(r"[^\p{L}\p{M}\p{N}\p{Pc} -]").unwrap();
         }
 
         let mut id = header;
@@ -123,9 +133,10 @@ struct HtmlFormatter<'o> {
     anchorizer: Anchorizer,
     footnote_ix: u32,
     written_footnote_ix: u32,
+    plugins: &'o ComrakPlugins<'o>,
 }
 
-#[cfg_attr(rustfmt, rustfmt_skip)]
+#[rustfmt::skip]
 const NEEDS_ESCAPED : [bool; 256] = [
     false, false, false, false, false, false, false, false,
     false, false, false, false, false, false, false, false,
@@ -235,13 +246,18 @@ fn dangerous_url(input: &[u8]) -> bool {
 }
 
 impl<'o> HtmlFormatter<'o> {
-    fn new(options: &'o ComrakOptions, output: &'o mut WriteWithLast<'o>) -> Self {
+    fn new(
+        options: &'o ComrakOptions,
+        output: &'o mut WriteWithLast<'o>,
+        plugins: &'o ComrakPlugins,
+    ) -> Self {
         HtmlFormatter {
-            options: options,
-            output: output,
+            options,
+            output,
             anchorizer: Anchorizer::new(),
             footnote_ix: 0,
             written_footnote_ix: 0,
+            plugins,
         }
     }
 
@@ -276,7 +292,7 @@ impl<'o> HtmlFormatter<'o> {
         lazy_static! {
             static ref HREF_SAFE: [bool; 256] = {
                 let mut a = [false; 256];
-                for &c in b"-_.+!*'(),%#@?=;:/,+&$~abcdefghijklmnopqrstuvwxyz".iter() {
+                for &c in b"-_.+!*(),%#@?=;:/,+$~abcdefghijklmnopqrstuvwxyz".iter() {
                     a[c as usize] = true;
                 }
                 for &c in b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".iter() {
@@ -339,7 +355,7 @@ impl<'o> HtmlFormatter<'o> {
                     if plain {
                         match node.data.borrow().value {
                             NodeValue::Text(ref literal)
-                            | NodeValue::Code(ref literal)
+                            | NodeValue::Code(NodeCode { ref literal, .. })
                             | NodeValue::HtmlInline(ref literal) => {
                                 self.escape(literal)?;
                             }
@@ -370,63 +386,78 @@ impl<'o> HtmlFormatter<'o> {
 
     fn collect_text<'a>(&self, node: &'a AstNode<'a>, output: &mut Vec<u8>) {
         match node.data.borrow().value {
-            NodeValue::Text(ref literal) | NodeValue::Code(ref literal) => {
+            NodeValue::Text(ref literal) | NodeValue::Code(NodeCode { ref literal, .. }) => {
                 output.extend_from_slice(literal)
             }
             NodeValue::LineBreak | NodeValue::SoftBreak => output.push(b' '),
-            _ => for n in node.children() {
-                self.collect_text(n, output);
-            },
+            _ => {
+                for n in node.children() {
+                    self.collect_text(n, output);
+                }
+            }
         }
     }
 
     fn format_node<'a>(&mut self, node: &'a AstNode<'a>, entering: bool) -> io::Result<bool> {
         match node.data.borrow().value {
             NodeValue::Document => (),
-            NodeValue::BlockQuote => if entering {
-                self.cr()?;
-                self.output.write_all(b"<blockquote>\n")?;
-            } else {
-                self.cr()?;
-                self.output.write_all(b"</blockquote>\n")?;
-            },
-            NodeValue::List(ref nl) => if entering {
-                self.cr()?;
-                if nl.list_type == ListType::Bullet {
-                    self.output.write_all(b"<ul>\n")?;
-                } else if nl.start == 1 {
-                    self.output.write_all(b"<ol>\n")?;
+            NodeValue::FrontMatter(_) => (),
+            NodeValue::BlockQuote => {
+                if entering {
+                    self.cr()?;
+                    self.output.write_all(b"<blockquote>\n")?;
                 } else {
-                    write!(self.output, "<ol start=\"{}\">\n", nl.start)?;
+                    self.cr()?;
+                    self.output.write_all(b"</blockquote>\n")?;
                 }
-            } else if nl.list_type == ListType::Bullet {
-                self.output.write_all(b"</ul>\n")?;
-            } else {
-                self.output.write_all(b"</ol>\n")?;
-            },
-            NodeValue::Item(..) => if entering {
-                self.cr()?;
-                self.output.write_all(b"<li>")?;
-            } else {
-                self.output.write_all(b"</li>\n")?;
-            },
-            NodeValue::DescriptionList => if entering {
-                self.cr()?;
-                self.output.write_all(b"<dl>")?;
-            } else {
-                self.output.write_all(b"</dl>\n")?;
-            },
+            }
+            NodeValue::List(ref nl) => {
+                if entering {
+                    self.cr()?;
+                    if nl.list_type == ListType::Bullet {
+                        self.output.write_all(b"<ul>\n")?;
+                    } else if nl.start == 1 {
+                        self.output.write_all(b"<ol>\n")?;
+                    } else {
+                        writeln!(self.output, "<ol start=\"{}\">", nl.start)?;
+                    }
+                } else if nl.list_type == ListType::Bullet {
+                    self.output.write_all(b"</ul>\n")?;
+                } else {
+                    self.output.write_all(b"</ol>\n")?;
+                }
+            }
+            NodeValue::Item(..) => {
+                if entering {
+                    self.cr()?;
+                    self.output.write_all(b"<li>")?;
+                } else {
+                    self.output.write_all(b"</li>\n")?;
+                }
+            }
+            NodeValue::DescriptionList => {
+                if entering {
+                    self.cr()?;
+                    self.output.write_all(b"<dl>")?;
+                } else {
+                    self.output.write_all(b"</dl>\n")?;
+                }
+            }
             NodeValue::DescriptionItem(..) => (),
-            NodeValue::DescriptionTerm => if entering {
-                self.output.write_all(b"<dt>")?;
-            } else {
-                self.output.write_all(b"</dt>\n")?;
-            },
-            NodeValue::DescriptionDetails => if entering {
-                self.output.write_all(b"<dd>")?;
-            } else {
-                self.output.write_all(b"</dd>\n")?;
-            },
+            NodeValue::DescriptionTerm => {
+                if entering {
+                    self.output.write_all(b"<dt>")?;
+                } else {
+                    self.output.write_all(b"</dt>\n")?;
+                }
+            }
+            NodeValue::DescriptionDetails => {
+                if entering {
+                    self.output.write_all(b"<dd>")?;
+                } else {
+                    self.output.write_all(b"</dd>\n")?;
+                }
+            }
             NodeValue::Heading(ref nch) => {
                 if entering {
                     self.cr()?;
@@ -447,48 +478,94 @@ impl<'o> HtmlFormatter<'o> {
                         )?;
                     }
                 } else {
-                    write!(self.output, "</h{}>\n", nch.level)?;
+                    writeln!(self.output, "</h{}>", nch.level)?;
                 }
             }
-            NodeValue::CodeBlock(ref ncb) => if entering {
-                self.cr()?;
+            NodeValue::CodeBlock(ref ncb) => {
+                if entering {
+                    self.cr()?;
 
-                if ncb.info.is_empty() {
-                    self.output.write_all(b"<pre><code>")?;
-                } else {
                     let mut first_tag = 0;
-                    while first_tag < ncb.info.len() && !isspace(ncb.info[first_tag]) {
-                        first_tag += 1;
+                    let mut pre_attributes: HashMap<String, String> = HashMap::new();
+                    let mut code_attributes: HashMap<String, String> = HashMap::new();
+                    let code_attr: String;
+
+                    if !ncb.info.is_empty() {
+                        while first_tag < ncb.info.len() && !isspace(ncb.info[first_tag]) {
+                            first_tag += 1;
+                        }
+
+                        if self.options.render.github_pre_lang {
+                            pre_attributes.insert(
+                                String::from("lang"),
+                                String::from_utf8(Vec::from(&ncb.info[..first_tag])).unwrap(),
+                            );
+                        } else {
+                            code_attr = format!(
+                                "language-{}",
+                                str::from_utf8(&ncb.info[..first_tag]).unwrap()
+                            );
+                            code_attributes.insert(String::from("class"), code_attr);
+                        }
                     }
 
-                    if self.options.render.github_pre_lang {
-                        self.output.write_all(b"<pre lang=\"")?;
-                        self.escape(&ncb.info[..first_tag])?;
-                        self.output.write_all(b"\"><code>")?;
-                    } else {
-                        self.output.write_all(b"<pre><code class=\"language-")?;
-                        self.escape(&ncb.info[..first_tag])?;
-                        self.output.write_all(b"\">")?;
+                    match self.plugins.render.codefence_syntax_highlighter {
+                        None => {
+                            self.output
+                                .write_all(build_opening_tag("pre", &pre_attributes).as_bytes())?;
+                            self.output.write_all(
+                                build_opening_tag("code", &code_attributes).as_bytes(),
+                            )?;
+
+                            self.escape(&ncb.literal)?;
+
+                            self.output.write_all(b"</code></pre>\n")?
+                        }
+                        Some(highlighter) => {
+                            self.output
+                                .write_all(highlighter.build_pre_tag(&pre_attributes).as_bytes())?;
+                            self.output.write_all(
+                                highlighter.build_code_tag(&code_attributes).as_bytes(),
+                            )?;
+
+                            self.output.write_all(
+                                highlighter
+                                    .highlight(
+                                        match str::from_utf8(&ncb.info[..first_tag]) {
+                                            Ok(lang) => Some(lang),
+                                            Err(_) => None,
+                                        },
+                                        str::from_utf8(ncb.literal.as_slice()).unwrap(),
+                                    )
+                                    .as_bytes(),
+                            )?;
+
+                            self.output.write_all(b"</code></pre>\n")?
+                        }
                     }
                 }
-                self.escape(&ncb.literal)?;
-                self.output.write_all(b"</code></pre>\n")?;
-            },
-            NodeValue::HtmlBlock(ref nhb) => if entering {
-                self.cr()?;
-                if !self.options.render.unsafe_ {
-                    self.output.write_all(b"<!-- raw HTML omitted -->")?;
-                } else if self.options.extension.tagfilter {
-                    tagfilter_block(&nhb.literal, &mut self.output)?;
-                } else {
-                    self.output.write_all(&nhb.literal)?;
+            }
+            NodeValue::HtmlBlock(ref nhb) => {
+                if entering {
+                    self.cr()?;
+                    if self.options.render.escape {
+                        self.escape(&nhb.literal)?;
+                    } else if !self.options.render.unsafe_ {
+                        self.output.write_all(b"<!-- raw HTML omitted -->")?;
+                    } else if self.options.extension.tagfilter {
+                        tagfilter_block(&nhb.literal, &mut self.output)?;
+                    } else {
+                        self.output.write_all(&nhb.literal)?;
+                    }
+                    self.cr()?;
                 }
-                self.cr()?;
-            },
-            NodeValue::ThematicBreak => if entering {
-                self.cr()?;
-                self.output.write_all(b"<hr />\n")?;
-            },
+            }
+            NodeValue::ThematicBreak => {
+                if entering {
+                    self.cr()?;
+                    self.output.write_all(b"<hr />\n")?;
+                }
+            }
             NodeValue::Paragraph => {
                 let tight = match node
                     .parent()
@@ -499,15 +576,21 @@ impl<'o> HtmlFormatter<'o> {
                     _ => false,
                 };
 
+                let tight = tight
+                    || matches!(
+                        node.parent().map(|n| n.data.borrow().value.clone()),
+                        Some(NodeValue::DescriptionTerm)
+                    );
+
                 if !tight {
                     if entering {
                         self.cr()?;
                         self.output.write_all(b"<p>")?;
                     } else {
-                        if match node.parent().unwrap().data.borrow().value {
-                            NodeValue::FootnoteDefinition(..) => true,
-                            _ => false,
-                        } && node.next_sibling().is_none()
+                        if matches!(
+                            node.parent().unwrap().data.borrow().value,
+                            NodeValue::FootnoteDefinition(..)
+                        ) && node.next_sibling().is_none()
                         {
                             self.output.write_all(b" ")?;
                             self.put_footnote_backref()?;
@@ -516,119 +599,142 @@ impl<'o> HtmlFormatter<'o> {
                     }
                 }
             }
-            NodeValue::Text(ref literal) => if entering {
-                self.escape(literal)?;
-            },
-            NodeValue::LineBreak => if entering {
-                self.output.write_all(b"<br />\n")?;
-            },
-            NodeValue::SoftBreak => if entering {
-                if self.options.render.hardbreaks {
+            NodeValue::Text(ref literal) => {
+                if entering {
+                    self.escape(literal)?;
+                }
+            }
+            NodeValue::LineBreak => {
+                if entering {
                     self.output.write_all(b"<br />\n")?;
-                } else {
-                    self.output.write_all(b"\n")?;
                 }
-            },
-            NodeValue::Code(ref literal) => if entering {
-                self.output.write_all(b"<code>")?;
-                self.escape(literal)?;
-                self.output.write_all(b"</code>")?;
-            },
-            NodeValue::HtmlInline(ref literal) => if entering {
-                if !self.options.render.unsafe_ {
-                    self.output.write_all(b"<!-- raw HTML omitted -->")?;
-                } else if self.options.extension.tagfilter && tagfilter(literal) {
-                    self.output.write_all(b"&lt;")?;
-                    self.output.write_all(&literal[1..])?;
-                } else {
-                    self.output.write_all(literal)?;
-                }
-            },
-            NodeValue::Strong => if entering {
-                self.output.write_all(b"<strong>")?;
-            } else {
-                self.output.write_all(b"</strong>")?;
-            },
-            NodeValue::Emph => if entering {
-                self.output.write_all(b"<em>")?;
-            } else {
-                self.output.write_all(b"</em>")?;
-            },
-            NodeValue::Strikethrough => if entering {
-                self.output.write_all(b"<del>")?;
-            } else {
-                self.output.write_all(b"</del>")?;
-            },
-            NodeValue::Superscript => if entering {
-                self.output.write_all(b"<sup>")?;
-            } else {
-                self.output.write_all(b"</sup>")?;
-            },
-            NodeValue::Subscript => if entering {
-                self.output.write_all(b"<sub>")?;
-            } else {
-                self.output.write_all(b"</sub>")?;
-            },
-            NodeValue::Link(ref nl) => if entering {
-                self.output.write_all(b"<a href=\"")?;
-                if self.options.render.unsafe_ || !dangerous_url(&nl.url) {
-                    self.escape_href(&nl.url)?;
-                }
-                if !nl.title.is_empty() {
-                    self.output.write_all(b"\" title=\"")?;
-                    self.escape(&nl.title)?;
-                }
-                self.output.write_all(b"\">")?;
-            } else {
-                self.output.write_all(b"</a>")?;
-            },
-            NodeValue::Image(ref nl) => if entering {
-                self.output.write_all(b"<img src=\"")?;
-                if self.options.render.unsafe_ || !dangerous_url(&nl.url) {
-                    self.escape_href(&nl.url)?;
-                }
-                self.output.write_all(b"\" alt=\"")?;
-                return Ok(true);
-            } else {
-                if !nl.title.is_empty() {
-                    self.output.write_all(b"\" title=\"")?;
-                    self.escape(&nl.title)?;
-                }
-                self.output.write_all(b"\" />")?;
-            },
-            NodeValue::Table(..) => if entering {
-                self.cr()?;
-                self.output.write_all(b"<table>\n")?;
-            } else {
-                if !node
-                    .last_child()
-                    .unwrap()
-                    .same_node(node.first_child().unwrap())
-                {
-                    self.cr()?;
-                    self.output.write_all(b"</tbody>\n")?;
-                }
-                self.cr()?;
-                self.output.write_all(b"</table>\n")?;
-            },
-            NodeValue::TableRow(header) => if entering {
-                self.cr()?;
-                if header {
-                    self.output.write_all(b"<thead>\n")?;
-                } else if let Some(n) = node.previous_sibling() {
-                    if let NodeValue::TableRow(true) = n.data.borrow().value {
-                        self.output.write_all(b"<tbody>\n")?;
+            }
+            NodeValue::SoftBreak => {
+                if entering {
+                    if self.options.render.hardbreaks {
+                        self.output.write_all(b"<br />\n")?;
+                    } else {
+                        self.output.write_all(b"\n")?;
                     }
                 }
-                self.output.write_all(b"<tr>")?;
-            } else {
-                self.cr()?;
-                self.output.write_all(b"</tr>")?;
-                if header {
-                    self.cr()?;
-                    self.output.write_all(b"</thead>")?;
+            }
+            NodeValue::Code(NodeCode { ref literal, .. }) => {
+                if entering {
+                    self.output.write_all(b"<code>")?;
+                    self.escape(literal)?;
+                    self.output.write_all(b"</code>")?;
                 }
-            },
+            }
+            NodeValue::HtmlInline(ref literal) => {
+                if entering {
+                    if self.options.render.escape {
+                        self.escape(&literal)?;
+                    } else if !self.options.render.unsafe_ {
+                        self.output.write_all(b"<!-- raw HTML omitted -->")?;
+                    } else if self.options.extension.tagfilter && tagfilter(literal) {
+                        self.output.write_all(b"&lt;")?;
+                        self.output.write_all(&literal[1..])?;
+                    } else {
+                        self.output.write_all(literal)?;
+                    }
+                }
+            }
+            NodeValue::Strong => {
+                if entering {
+                    self.output.write_all(b"<strong>")?;
+                } else {
+                    self.output.write_all(b"</strong>")?;
+                }
+            }
+            NodeValue::Emph => {
+                if entering {
+                    self.output.write_all(b"<em>")?;
+                } else {
+                    self.output.write_all(b"</em>")?;
+                }
+            }
+            NodeValue::Strikethrough => {
+                if entering {
+                    self.output.write_all(b"<del>")?;
+                } else {
+                    self.output.write_all(b"</del>")?;
+                }
+            }
+            NodeValue::Superscript => {
+                if entering {
+                    self.output.write_all(b"<sup>")?;
+                } else {
+                    self.output.write_all(b"</sup>")?;
+                }
+            }
+            NodeValue::Link(ref nl) => {
+                if entering {
+                    self.output.write_all(b"<a href=\"")?;
+                    if self.options.render.unsafe_ || !dangerous_url(&nl.url) {
+                        self.escape_href(&nl.url)?;
+                    }
+                    if !nl.title.is_empty() {
+                        self.output.write_all(b"\" title=\"")?;
+                        self.escape(&nl.title)?;
+                    }
+                    self.output.write_all(b"\">")?;
+                } else {
+                    self.output.write_all(b"</a>")?;
+                }
+            }
+            NodeValue::Image(ref nl) => {
+                if entering {
+                    self.output.write_all(b"<img src=\"")?;
+                    if self.options.render.unsafe_ || !dangerous_url(&nl.url) {
+                        self.escape_href(&nl.url)?;
+                    }
+                    self.output.write_all(b"\" alt=\"")?;
+                    return Ok(true);
+                } else {
+                    if !nl.title.is_empty() {
+                        self.output.write_all(b"\" title=\"")?;
+                        self.escape(&nl.title)?;
+                    }
+                    self.output.write_all(b"\" />")?;
+                }
+            }
+            NodeValue::Table(..) => {
+                if entering {
+                    self.cr()?;
+                    self.output.write_all(b"<table>\n")?;
+                } else {
+                    if !node
+                        .last_child()
+                        .unwrap()
+                        .same_node(node.first_child().unwrap())
+                    {
+                        self.cr()?;
+                        self.output.write_all(b"</tbody>\n")?;
+                    }
+                    self.cr()?;
+                    self.output.write_all(b"</table>\n")?;
+                }
+            }
+            NodeValue::TableRow(header) => {
+                if entering {
+                    self.cr()?;
+                    if header {
+                        self.output.write_all(b"<thead>\n")?;
+                    } else if let Some(n) = node.previous_sibling() {
+                        if let NodeValue::TableRow(true) = n.data.borrow().value {
+                            self.output.write_all(b"<tbody>\n")?;
+                        }
+                    }
+                    self.output.write_all(b"<tr>")?;
+                } else {
+                    self.cr()?;
+                    self.output.write_all(b"</tr>")?;
+                    if header {
+                        self.cr()?;
+                        self.output.write_all(b"</thead>")?;
+                    }
+                }
+            }
             NodeValue::TableCell => {
                 let row = &node.parent().unwrap().data.borrow().value;
                 let in_header = match *row {
@@ -677,41 +783,57 @@ impl<'o> HtmlFormatter<'o> {
                     self.output.write_all(b"</td>")?;
                 }
             }
-            NodeValue::FootnoteDefinition(_) => if entering {
-                if self.footnote_ix == 0 {
-                    self.output
-                        .write_all(b"<section class=\"footnotes\">\n<ol>\n")?;
-                }
-                self.footnote_ix += 1;
-                write!(self.output, "<li id=\"fn{}\">\n", self.footnote_ix)?;
-            } else {
-                if self.put_footnote_backref()? {
-                    self.output.write_all(b"\n")?;
-                }
-                self.output.write_all(b"</li>\n")?;
-            },
-            NodeValue::FootnoteReference(ref r) => if entering {
-                let r = str::from_utf8(r).unwrap();
-                write!(
-                    self.output,
-                    "<sup class=\"footnote-ref\"><a href=\"#fn{}\" id=\"fnref{}\">{}</a></sup>",
-                    r, r, r
-                )?;
-            },
-            NodeValue::TaskItem(checked) => if entering {
-                if checked {
-                    self.output
-                        .write_all(b"<input type=\"checkbox\" disabled=\"\" checked=\"\" /> ")?;
+            NodeValue::FootnoteDefinition(_) => {
+                if entering {
+                    if self.footnote_ix == 0 {
+                        self.output
+                            .write_all(b"<section class=\"footnotes\">\n<ol>\n")?;
+                    }
+                    self.footnote_ix += 1;
+                    writeln!(self.output, "<li id=\"fn{}\">", self.footnote_ix)?;
                 } else {
-                    self.output
-                        .write_all(b"<input type=\"checkbox\" disabled=\"\" /> ")?;
+                    if self.put_footnote_backref()? {
+                        self.output.write_all(b"\n")?;
+                    }
+                    self.output.write_all(b"</li>\n")?;
                 }
-            },
-            NodeValue::SpoileredText => if entering {
-                self.output.write_all(b"<span class=\"spoiler\">")?;
-            } else {
-                self.output.write_all(b"</span>")?;
-            },
+            }
+            NodeValue::FootnoteReference(ref r) => {
+                if entering {
+                    let r = str::from_utf8(r).unwrap();
+                    write!(
+                        self.output,
+                        "<sup class=\"footnote-ref\"><a href=\"#fn{}\" id=\"fnref{}\">{}</a></sup>",
+                        r, r, r
+                    )?;
+                }
+            }
+            NodeValue::TaskItem(checked) => {
+                if entering {
+                    if checked {
+                        self.output.write_all(
+                            b"<input type=\"checkbox\" disabled=\"\" checked=\"\" /> ",
+                        )?;
+                    } else {
+                        self.output
+                            .write_all(b"<input type=\"checkbox\" disabled=\"\" /> ")?;
+                    }
+                }
+            }
+            NodeValue::Subscript => {
+                if entering {
+                    self.output.write_all(b"<sub>")?;
+                } else {
+                    self.output.write_all(b"</sub>")?;
+                }
+            }
+            NodeValue::SpoileredText => {
+                if entering {
+                    self.output.write_all(b"<span class=\"spoiler\">")?;
+                } else {
+                    self.output.write_all(b"</span>")?;
+                }
+            }
             NodeValue::ImageMention(ref data) => {
                 log::debug!("TODO(Xe): this");
                 write!(self.output, "<a href=\"{0}\">>>{0}</a>", String::from_utf8(data.clone()).unwrap())?;
