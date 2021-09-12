@@ -319,6 +319,9 @@ pub struct ComrakExtensionOptions {
 
     /// Enables Furbooru extensions to Markdown parsing.
     pub furbooru: bool,
+
+    /// Enables underline
+    pub underline: bool,
 }
 
 #[derive(Default, Debug, Clone)]

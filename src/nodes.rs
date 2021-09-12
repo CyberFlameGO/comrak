@@ -136,6 +136,9 @@ pub enum NodeValue {
     /// **Inline**.  Subscript.  Enabled with `ext_subscript` option.
     Subscript,
 
+    /// **Inline**.  Underline.
+    Underline,
+
     /// **Inline**.  A [link](https://github.github.com/gfm/#links) to some URL, with possible
     /// title.
     Link(NodeLink),

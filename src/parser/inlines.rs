@@ -798,6 +798,8 @@ impl<'a, 'r, 'o, 'd, 'i, 'c, 'subj> Subject<'a, 'r, 'o, 'd, 'i, 'c, 'subj> {
                 NodeValue::Subscript
             } else if self.options.extension.spoiler && opener_char == b'|' && use_delims == 2 {
                 NodeValue::SpoileredText
+            } else if self.options.extension.underline && opener_char == b'_' && use_delims == 2 {
+                NodeValue::Underline
             } else if use_delims == 1 {
                 NodeValue::Emph
             } else {

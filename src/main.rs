@@ -110,6 +110,7 @@ if the file does not exist.\
                     "subscript",
                     "spoiler",
                     "furbooru",
+                    "underline",
                     "footnotes",
                     "description-lists",
                 ])
@@ -203,6 +204,7 @@ if the file does not exist.\
             subscript: exts.remove("subscript"),
             spoiler: exts.remove("spoiler"),
             furbooru: exts.remove("furbooru"),
+            underline: exts.remove("underline"),
             header_ids: matches.value_of("header-ids").map(|s| s.to_string()),
             footnotes: exts.remove("footnotes"),
             description_lists: exts.remove("description-lists"),

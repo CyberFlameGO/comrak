@@ -842,6 +842,13 @@ impl<'o> HtmlFormatter<'o> {
                     String::from_utf8(data.url.clone()).unwrap()
                 )?;
             }
+            NodeValue::Underline => {
+                if entering {
+                    self.output.write_all(b"<ins>")?;
+                } else {
+                    self.output.write_all(b"</ins>")?;
+                }
+            }
         }
         Ok(false)
     }
